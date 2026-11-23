@@ -1,0 +1,13 @@
+out/
+video/frames/
+video/chrome-profile*/
+video/chrome-profile
+# Local staging / working files (not part of the game entry).
+/models-quaternius/
+/models/
+models-preview.html
+claude-game-*.html
+claude-playtest*
+claude-prompt*.md
+quaternius-test/
+test-pistol.mjs

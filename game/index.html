@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>La Vega 3D — open-world crime in La Vega</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1a2a; font-family: Arial, Helvetica, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  canvas.webgl { display: block; width: 100%; height: 100%; touch-action: none; }
+  /* HUD — top bar: [round minimap] [act + objective] [money/clock/stars].
+     One flex row so nothing can overlap, at any width. */
+  #hud { position: absolute; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); display: none; }
+  #hud-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 8px 10px; background: rgba(8,12,26,.55); }
+  #minimap-wrap { flex: 0 0 auto; background: rgba(6,14,28,.55); border-radius: 50%; padding: 3px; border: 2px solid rgba(255,255,255,.45); box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+  #minimap { display: block; width: 104px; height: 104px; border-radius: 50%; }
+  #hud-mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding-top: 2px; }
+  #hud-act { font-size: 12px; letter-spacing: 1px; line-height: 1.35; color: #ffd166; background: rgba(0,0,0,.45); padding: 4px 10px; border-radius: 6px; max-width: 100%; }
+  #hud-district { font-size: 12px; letter-spacing: 1px; color: #9fd8ff; background: rgba(0,0,0,.45); padding: 3px 10px; border-radius: 6px; max-width: 100%; }
+  #hud-objective { font-size: 14px; background: rgba(0,0,0,.45); padding: 5px 10px; border-radius: 6px; max-width: 100%; }
+  #hud-dispatch { font-size: 12px; color: #9fd8ff; background: rgba(0,0,0,.4); padding: 3px 10px; border-radius: 6px; max-width: 100%; }
+  #hud-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; padding-top: 2px; }
+  #hud-money { font-size: 24px; font-weight: bold; color: #7dff9a; }
+  #hud-wanted { font-size: 22px; letter-spacing: 2px; line-height: 1; }
+  #hud-rank { font-size: 12px; letter-spacing: 1px; color: #9fd8ff; }
+  #hud-toprow { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  #hud-clock { font-size: 16px; font-weight: bold; background: rgba(0,0,0,.45); padding: 3px 9px; border-radius: 6px; }
+  #hud-timer { position: absolute; top: 132px; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: bold; color: #ffd166; }
+  #hud-message { position: absolute; top: 168px; left: 50%; transform: translateX(-50%); font-size: 16px; background: rgba(0,0,0,.6); padding: 8px 14px; border-radius: 8px; max-width: 82%; text-align: center; }
+  #hud-bottom { position: absolute; bottom: 12px; left: 14px; display: flex; gap: 14px; align-items: center; font-size: 15px; flex-wrap: wrap; max-width: 55%; }
+  #hud-health { width: 150px; height: 14px; background: rgba(0,0,0,.55); border-radius: 7px; overflow: hidden; }
+  #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7dff9a); }
+  #hud-fuel { width: 110px; height: 14px; background: rgba(0,0,0,.55); border-radius: 7px; overflow: hidden; display: none; align-items: center; }
+  #hud-fuel-fill { height: 100%; width: 100%; background: #ffd166; }
+  #hud-fuel span { font-size: 11px; margin-left: 6px; }
+  #hud-speed { position: absolute; right: 16px; bottom: 12px; font-size: 26px; font-weight: bold; }
+  #hud-ammo { font-size: 14px; font-weight: bold; background: rgba(0,0,0,.45); padding: 3px 10px; border-radius: 6px; color: #ffd166; }
+  #hud-help { position: absolute; right: 14px; top: 140px; font-size: 12px; opacity: .85; text-align: right; line-height: 1.5; }
+  /* Control modes (ilham 19:27 WIB): touch mode hides the keyboard help
+     (it used to overlap the touch buttons in landscape); keyboard mode
+     hides the touch buttons entirely. */
+  body.mode-touch #hud-help { display: none; }
+  body.mode-touch .menu-left .keys { display: none; }
+  body.mode-keyboard #touch-ui { display: none !important; }
+  /* Dialogue */
+  #mission-card { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #fff; background: linear-gradient(180deg, rgba(8,16,32,.42), rgba(8,16,32,.72)); z-index: 25; cursor: pointer; padding: 24px; }
+  #mission-card-act { color: #ffd166; letter-spacing: 4px; font-size: 14px; font-weight: bold; margin-bottom: 10px; }
+  #mission-card-title { font-size: 44px; font-weight: 900; font-style: italic; color: #ffd166; text-shadow: 3px 3px 0 #ff2e88, 7px 7px 0 #7a1030, 0 10px 28px rgba(0,0,0,.7); margin-bottom: 14px; }
+  #mission-card-body { font-size: 18px; max-width: 560px; line-height: 1.5; color: #ffe9a8; margin-bottom: 12px; }
+  #mission-card-sub { font-size: 15px; color: #fff; opacity: .85; margin-bottom: 22px; }
+  #mission-card-hint { font-size: 12px; letter-spacing: 3px; color: #ffffff88; animation: hintBlink 1.2s infinite; }
+  @keyframes hintBlink { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+  #dialogue-box { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); width: min(640px, 88%); background: rgba(10,16,32,.88); border: 2px solid #ffd166; border-radius: 10px; padding: 14px 18px; color: #fff; display: none; cursor: pointer; pointer-events: auto; z-index: 8; }
+  #btn-phone { position: absolute; right: 14px; top: 118px; width: 46px; height: 46px; border-radius: 50%; font-size: 22px; background: rgba(8,18,32,.75); border: 2px solid #9fd8ff88; color: #fff; cursor: pointer; z-index: 9; display: none; }
+  #hud-next { font-size: 12px; color: #ffd166; background: rgba(0,0,0,.45); padding: 3px 10px; border-radius: 6px; max-width: 100%; display: none; }
+  #hud-hint { font-size: 12px; font-style: italic; color: #9fd8ff; background: rgba(0,0,0,.45); padding: 3px 10px; border-radius: 6px; max-width: 100%; display: none; }
+  #crew-bar { position: absolute; bottom: 64px; left: 14px; display: none; gap: 8px; z-index: 9; }
+  .crew-btn { background: rgba(8,18,32,.8); border: 1px solid #ffd166; color: #ffd166; font-size: 12px; font-weight: bold; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+  .crew-btn:disabled { opacity: .45; cursor: default; }
+  #hud-prompt { position: absolute; left: 50%; bottom: 168px; transform: translateX(-50%); background: rgba(8,18,32,.8); border: 1px solid #ffd166; color: #ffd166; font-weight: bold; font-size: 14px; letter-spacing: 1px; padding: 6px 14px; border-radius: 20px; display: none; z-index: 9; white-space: nowrap; }
+  .char-row { display: flex; align-items: center; gap: 8px; }
+  .char-mid { flex: 1; }
+  .char-nav { background: rgba(255,209,102,.15); border: 1px solid #ffd16688; color: #ffd166; font-size: 18px; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  #char-dots { margin-top: 10px; }
+  #char-dots .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.3); margin: 0 4px; }
+  #char-dots .dot.on { background: #ffd166; }
+  .char-note { font-size: 11px; opacity: .7; margin: 8px 0 0 0; }
+  #phone-panel { position: absolute; right: 14px; top: 200px; width: 240px; background: rgba(10,16,32,.92); border: 2px solid #9fd8ff; border-radius: 10px; padding: 12px 14px; color: #fff; display: none; z-index: 8; }
+  #phone-panel h3 { margin: 0 0 8px 0; font-size: 15px; color: #9fd8ff; letter-spacing: 1px; }
+  #phone-panel button { display: block; width: 100%; margin: 5px 0; padding: 8px; font-size: 14px; font-weight: bold; background: #1d2a44; color: #fff; border: 1px solid #3a4a6a; border-radius: 6px; cursor: pointer; text-align: left; }
+  #phone-panel button:hover { background: #2a3c5e; }
+  #phone-panel .msgs { font-size: 12px; opacity: .8; line-height: 1.5; margin-top: 8px; border-top: 1px solid #3a4a6a; padding-top: 8px; }
+  #dlg-who { color: #ffd166; font-weight: bold; font-size: 15px; margin-bottom: 4px; }
+  #dlg-text { font-size: 16px; line-height: 1.5; }
+  #dlg-hint { font-size: 12px; opacity: .7; margin-top: 8px; text-align: right; }
+  #dlg-portrait { position: absolute; left: 14px; top: 14px; width: 44px; height: 44px; border-radius: 50%; background: #ff2e88; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border: 2px solid #ffd166; }
+  #dlg-who, #dlg-role, #dlg-text, #dlg-hint { margin-left: 58px; }
+  #dlg-role { font-size: 12px; color: #9fd8ff; letter-spacing: 1px; margin-bottom: 4px; }
+  #hud-radio { font-size: 12px; color: #9fd8ff; letter-spacing: 1px; margin-top: 2px; }
+  #hud-rp { height: 4px; background: rgba(255,255,255,.18); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  #hud-rp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffd166, #ff2e88); }
+  #hud-wanted.insight { animation: starBlink .5s infinite; }
+  @keyframes starBlink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  #location-card { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); text-align: center; color: #fff; display: none; pointer-events: none; z-index: 8; }
+  #location-name { font-size: 38px; font-weight: 900; font-style: italic; letter-spacing: 4px; color: #ffd166; text-shadow: 3px 3px 0 #ff2e88, 0 8px 24px rgba(0,0,0,.7); }
+  #location-sub { font-size: 14px; letter-spacing: 2px; color: #ffe9a8; margin-top: 4px; text-shadow: 0 2px 0 rgba(0,0,0,.6); }
+  #dealer-panel { position: absolute; right: 14px; top: 120px; width: min(340px, 88vw); max-height: 62vh; display: none; flex-direction: column; background: rgba(10,16,32,.94); border: 2px solid #ffd166; border-radius: 10px; color: #fff; z-index: 18; overflow: hidden; }
+  #dealer-title { padding: 12px 14px 4px; font-weight: 900; letter-spacing: 2px; color: #ffd166; font-size: 16px; }
+  #dealer-sub { padding: 0 14px 8px; font-size: 12px; color: #ffffffaa; }
+  #dealer-list { overflow-y: auto; padding: 0 8px 8px; }
+  .dealer-row { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .dealer-row.sel { background: rgba(255,209,102,.22); outline: 1px solid #ffd166; }
+  .dealer-row .p { color: #ffd166; font-weight: bold; white-space: nowrap; }
+  .dealer-row.owned { opacity: .55; }
+  .dealer-row.cant { opacity: .45; }
+  #dealer-foot { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,.15); }
+  #dealer-foot button { flex: 1; padding: 10px; border-radius: 8px; border: none; font-weight: 900; cursor: pointer; }
+  #dealer-buy { background: #ffd166; color: #20242c; }
+  #dealer-close { background: rgba(255,255,255,.15); color: #fff; }
+  /* Video title card */
+  #video-title { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; color: #fff; pointer-events: none; text-shadow: 0 4px 0 #b0512f, 0 8px 24px rgba(0,0,0,.7); z-index: 6; }
+  #video-title h1 { font-size: 72px; letter-spacing: 6px; color: #ffd166; margin: 0; }
+  #video-title p { font-size: 22px; margin: 8px 0 0; }
+  /* Screens — translucent so the 3D city shows through the menu (Karimbu
+     framing: dusk city + beach behind the buttons). Credits/Settings stay
+     opaque via their own rule below. */
+  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #fff; background: linear-gradient(180deg, rgba(10,20,40,.22), rgba(10,20,40,.55)); z-index: 7; }
+  .screen h1 { font-size: 64px; margin: 0; letter-spacing: 4px; color: #ffd166; text-shadow: 0 4px 0 #b0512f, 0 8px 24px rgba(0,0,0,.6); }
+  /* Title: La Vega gold, italic, with a NEON PINK offset shadow (La Rosa
+     pink + gold = our identity). NOT a sunset gradient — Karimbu owns the
+     orange→pink gradient title; ours is gold neon-sign type. */
+  #title-screen h1 { font-size: 76px; font-style: italic; letter-spacing: 6px; color: #ffd166; text-shadow: 3px 3px 0 #ff2e88, 7px 7px 0 #7a1030, 0 10px 28px rgba(0,0,0,.7); }
+  /* Subtitle: pale gold, wide letter-spacing (structure like Karimbu's
+     teal subtitle, colour ours — no teal here). */
+  #title-screen h2 { color: #ffe9a8; letter-spacing: 6px; font-weight: bold; font-size: 18px; }
+  #title-screen .menu-foot { font-size: 12px; opacity: .75; margin-top: 14px; letter-spacing: 1px; }
+  .save-note { font-size: 12px; opacity: .75; margin: 2px 0 0 0; }
+  .screen h2 { font-size: 20px; margin: 6px 0 14px; font-weight: normal; color: #ffe9a8; }
+  .screen p { max-width: 640px; line-height: 1.55; font-size: 15px; margin: 8px 0; }
+  .screen .keys { font-size: 13px; opacity: .9; background: rgba(0,0,0,.4); padding: 10px 16px; border-radius: 8px; line-height: 1.7; }
+  .screen button { pointer-events: auto; cursor: pointer; font-size: 19px; font-weight: bold; padding: 13px 30px; margin: 6px; border: none; border-radius: 10px; background: #ffd166; color: #20242c; min-width: 220px; }
+  .screen button.secondary { background: #3d7dd9; color: #fff; }
+  /* Credits/Settings must be OPAQUE: the .screen gradient is translucent,
+     so the title menu (PLAY / WATCH TRAILER / SETTINGS / slots) showed
+     THROUGH the credits text on ilham's phone. Solid background + scroll
+     for long text on small screens. */
+  #credits-screen, #settings-screen { background: #0e1a2a; overflow-y: auto; justify-content: flex-start; padding: 28px 16px; }
+  .screen button.ghost { background: rgba(255,255,255,.14); color: #fff; border: 1px solid #ffffff55; }
+  .screen button:disabled { opacity: .4; cursor: default; }
+  .screen button.small { font-size: 15px; padding: 9px 22px; min-width: 180px; }
+  .screen button:hover { filter: brightness(1.12); }
+  /* Android-style title menu: big buttons left, character card right. */
+  .menu-layout { display: flex; gap: 28px; align-items: flex-start; justify-content: center; text-align: left; max-width: 980px; margin: 0 auto; }
+  .menu-left { flex: 1 1 520px; min-width: 0; }
+  .menu-left h1 { text-align: left; }
+  .menu-left h2 { text-align: left; }
+  .menu-left p { text-align: left; }
+  .menu-right { flex: 0 0 300px; }
+  #char-card { background: rgba(8,12,26,.72); border: 2px solid #ffd16666; border-radius: 14px; padding: 18px; text-align: center; margin-top: 64px; }
+  #char-name { font-size: 26px; font-weight: bold; color: #ffd166; letter-spacing: 1px; }
+  #char-role { font-size: 13px; color: #9fd8ff; letter-spacing: 1px; margin: 4px 0 10px 0; }
+  #char-desc { font-size: 13px; line-height: 1.5; opacity: .9; min-height: 60px; }
+  .char-switch { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0; }
+  .char-switch button { min-width: 0 !important; padding: 8px 16px !important; font-size: 18px !important; margin: 0 !important; }
+  #char-dots { font-size: 15px; letter-spacing: 4px; color: #ffd166; }
+  #char-note { font-size: 11px; opacity: .7; margin-top: 8px; }
+  #save-slots { display: flex; gap: 8px; margin: 10px 0 4px 0; flex-wrap: wrap; }
+  #save-slots .slot { min-width: 0 !important; flex: 1 1 150px; padding: 9px 10px !important; font-size: 13px !important; font-weight: bold; background: rgba(255,255,255,.1); color: #fff; border: 1px solid #ffffff44; border-radius: 8px; cursor: pointer; }
+  #save-slots .slot.sel { border-color: #ffd166; background: rgba(255,209,102,.18); }
+  #save-slots .slot small { display: block; font-weight: normal; opacity: .8; font-size: 11px; }
+  .slot-row { display: flex; gap: 8px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
+  .slot-row .slot { min-width: 0 !important; padding: 8px 14px !important; font-size: 13px !important; }
+  .slot-row .slot.sel { border-color: #ffd166; }
+  @media (max-width: 760px) {
+    .menu-layout { flex-direction: column; gap: 10px; }
+    .menu-right { flex: 1 1 auto; width: 100%; }
+    #char-card { margin-top: 0; padding: 12px; }
+    #char-desc { min-height: 0; }
+  }
+  #pause-screen, #end-screen, #settings-screen, #credits-screen, #controls-screen { display: none; }
+  .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(480px, 88%); margin: 6px 0; font-size: 16px; background: rgba(0,0,0,.4); padding: 10px 16px; border-radius: 8px; }
+  .settings-row input[type=range] { width: 180px; }
+  .settings-row select { font-size: 16px; padding: 6px; border-radius: 6px; }
+  #quality-pill { position: fixed; top: 66px; left: 50%; transform: translateX(-50%); background: rgba(10,16,32,.92); border: 1px solid #ffd166; color: #ffd166; padding: 9px 18px; border-radius: 22px; font-size: 13px; letter-spacing: 1px; display: none; z-index: 30; white-space: nowrap; }
+  .controls-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: min(880px, 94%); margin: 4px 0 14px; }
+  .ctl-card { background: rgba(0,0,0,.4); border: 1px solid rgba(255,209,102,.35); border-radius: 10px; padding: 10px 12px; text-align: left; }
+  .ctl-card b { display: block; font-size: 17px; font-style: italic; color: #ffd166; letter-spacing: 1px; }
+  .ctl-card span { font-size: 11px; letter-spacing: 1px; color: #ffe9a8; opacity: .9; }
+  .ctl-sec { font-size: 15px; letter-spacing: 3px; color: #9fd8ff; margin: 10px 0 2px; }
+  #controls-screen { overflow-y: auto; justify-content: flex-start; padding: 24px 12px; }
+  body.hud-compact #hud-act, body.hud-compact #hud-district, body.hud-compact #hud-objective, body.hud-compact #hud-dispatch { display: none !important; }
+  @media (max-width: 640px) { .controls-grid { grid-template-columns: repeat(2, 1fr); } }
+  /* Trailer modal */
+  #trailer-modal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.85); z-index: 20; flex-direction: column; }
+  #trailer-video { width: min(960px, 94vw); border-radius: 10px; }
+  /* Touch UI (Android) — minimal: small 56px buttons, tight right cluster,
+     each shown only when its action makes sense (see updateTouchButtons). */
+  #touch-ui { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 5; }
+  #touch-joystick { position: absolute; left: 22px; bottom: 24px; width: 124px; height: 124px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.35); pointer-events: auto; touch-action: none; }
+  #touch-knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(255,209,102,.85); }
+  .touch-btn { position: absolute; width: 56px; height: 56px; border-radius: 50%; background: rgba(8,18,32,.82); border: 2px solid rgba(255,255,255,.9); box-shadow: 0 2px 10px rgba(0,0,0,.55); color: #fff; font-size: 13px; font-weight: bold; text-shadow: 0 1px 2px rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; text-align: center; pointer-events: auto; touch-action: none; user-select: none; } /* M3c: dark glass so JUMP/PUNCH read on light sand (they looked faded/disabled) */
+  .touch-btn:active { background: rgba(255,209,102,.6); }
+  #btn-gas { right: 20px; bottom: 24px; }
+  #btn-brake { right: 88px; bottom: 24px; }
+  #btn-shoot { right: 20px; bottom: 92px; background: rgba(224,30,55,.5); }
+  #btn-aim { right: 20px; bottom: 160px; background: rgba(61,125,217,.5); }
+  #btn-punch { right: 88px; bottom: 92px; }
+  #btn-enter { right: 88px; bottom: 160px; background: rgba(61,125,217,.55); } /* was right:54 — overlapped AIM (right:20) in landscape */
+  #btn-touch-pause { left: 50%; transform: translateX(-50%); right: auto; top: auto; bottom: 24px; width: 44px; height: 44px; font-size: 16px; border-radius: 12px; }
+  /* JUMP had NO position rule, so it sat at its static spot — top-left,
+     on top of the minimap (ilham's phone screenshots). It belongs with the
+     other action buttons: left of PUNCH, same row as FIRE. */
+  #btn-jump { right: 156px; bottom: 92px; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; background: #0e1a2a; z-index: 30; }
+  #loading-bar { width: 240px; height: 8px; background: rgba(255,255,255,.2); border-radius: 4px; margin: 14px auto 8px; }
+  #loading-fill { height: 100%; width: 0%; background: #ffd166; border-radius: 4px; }
+  #loading-label { font-size: 13px; opacity: .8; letter-spacing: 1px; }
+  #btn-loading-retry { font-size: 17px; font-weight: bold; padding: 12px 28px; border: none; border-radius: 10px; background: #ffd166; color: #20242c; cursor: pointer; }
+  /* Crosshair (Point Blank ADS kit): 4 ticks + centre dot around a gap
+     that the game shrinks while aiming and grows while firing. */
+  #crosshair { --gap: 12px; position: absolute; left: 50%; top: 50%; width: 0; height: 0; display: none; pointer-events: none; z-index: 8; }
+  #crosshair .ch-dot { position: absolute; left: -2px; top: -2px; width: 4px; height: 4px; border-radius: 50%; background: #fff; box-shadow: 0 0 3px #000; }
+  #crosshair .ch-t { position: absolute; background: #fff; box-shadow: 0 0 3px #000; }
+  #crosshair .ch-t.n { left: -1px; top: calc(-1 * var(--gap) - 8px); width: 2px; height: 8px; }
+  #crosshair .ch-t.s { left: -1px; top: var(--gap); width: 2px; height: 8px; }
+  #crosshair .ch-t.w { top: -1px; left: calc(-1 * var(--gap) - 8px); width: 8px; height: 2px; }
+  #crosshair .ch-t.e { top: -1px; left: var(--gap); width: 8px; height: 2px; }
+  #crosshair.ads .ch-t { background: #ffd166; }
+  #crosshair.ads .ch-dot { background: #ffd166; }
+  /* Weapon wheel (Claude parity): radial menu, Q to open, 1-5 or click to pick. */
+  #weapon-wheel { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 300px; height: 300px; display: none; align-items: center; justify-content: center; pointer-events: none; z-index: 9; }
+  #weapon-wheel .ww-center { position: absolute; width: 84px; height: 84px; border-radius: 50%; background: rgba(10,16,32,.9); border: 2px solid #ffd166; color: #ffd166; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; text-align: center; }
+  #weapon-wheel button { position: absolute; width: 92px; height: 52px; border-radius: 10px; background: rgba(10,16,32,.92); color: #fff; border: 2px solid #3a4a6a; font-size: 13px; font-weight: bold; cursor: pointer; pointer-events: auto; }
+  #weapon-wheel button.sel { border-color: #ffd166; background: rgba(255,79,139,.75); }
+  #weapon-wheel button.locked { opacity: .55; border-style: dashed; }
+  #ww-fists { left: 50%; top: 0; transform: translateX(-50%); }
+  #ww-pistol { right: 0; top: 26%; }
+  #ww-smg { right: 6%; bottom: 8%; }
+  #ww-shotgun { left: 6%; bottom: 8%; }
+  #ww-rifle { left: 0; top: 26%; }
+  @media (orientation: portrait) and (pointer: coarse) {
+    /* Portrait menu is taller than the screen (title + options + slots +
+       char card): let it scroll from the top instead of centring and
+       cutting the title off. The desktop keys help is hidden on touch —
+       the footer line covers touch controls. */
+    #title-screen { overflow-y: auto; justify-content: flex-start; padding: 18px 12px; }
+    .menu-left .keys { display: none; }
+    #minimap { width: 92px; height: 92px; }
+    #hud-help { display: none; }
+    #hud-objective { font-size: 12px; }
+    #hud-act { font-size: 11px; letter-spacing: 1px; }
+    #hud-money { font-size: 20px; }
+    #hud-wanted { font-size: 18px; }
+    #hud-clock { font-size: 14px; }
+    #hud-bottom { max-width: 48%; bottom: 164px; }
+    #hud-message { top: 156px; font-size: 14px; }
+    .screen h1 { font-size: 42px; }
+    #title-screen h1 { font-size: 44px; letter-spacing: 3px; }
+    #title-screen h2 { font-size: 14px; letter-spacing: 4px; }
+    #touch-joystick { bottom: 24px; }
+  }
+  @media (min-width: 900px) {
+    #minimap { width: 128px; height: 128px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="loading"><div style="text-align:center">Loading La Vega… <span id="loading-pct">0%</span><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-label">Starting up…</div><button id="btn-loading-retry" style="display:none;margin-top:16px">RETRY</button></div></div>
+<div id="crosshair"><span class="ch-dot"></span><span class="ch-t n"></span><span class="ch-t s"></span><span class="ch-t w"></span><span class="ch-t e"></span></div>
+
+<div id="hud">
+  <div id="hud-top">
+    <div id="minimap-wrap"><canvas id="minimap" width="168" height="168"></canvas></div>
+    <div id="hud-mid">
+      <div id="hud-toprow"><span id="hud-money">$0</span><span id="hud-wanted">☆☆☆☆☆</span><span id="hud-rank">RANK 0 · NEWCOMER</span></div>
+      <div id="hud-rp" title="Rank progress"><div id="hud-rp-fill"></div></div>
+      <div id="hud-act">ACT I — FRESH OFF THE FERRY</div>
+      <div id="hud-objective"></div>
+      <div id="hud-next"></div>
+      <div id="hud-hint"></div>
+      <div id="hud-dispatch"></div>
+      <div id="hud-district">MARINA · 0%</div>
+      <div id="hud-radio">♪ Neon Tide FM 98.6</div>
+      <span id="hud-ammo">🔫 PISTOL 12/24</span>
+    </div>
+    <div id="hud-right">
+      <span id="hud-clock">12:00</span>
+    </div>
+  </div>
+  <div id="hud-timer"></div>
+  <div id="hud-message"></div>
+  <div id="crew-bar">
+    <button class="crew-btn" id="crew-plates">Z · SWAP PLATES</button>
+    <button class="crew-btn" id="crew-fix">C · QUICK FIX</button>
+    <button class="crew-btn" id="crew-eyes">G · EYES OUT</button>
+  </div>
+  <div id="hud-bottom">
+    <div id="hud-health"><div id="hud-health-fill"></div></div>
+    <div id="hud-fuel"><div id="hud-fuel-fill"></div><span>FUEL</span></div>
+  </div>
+  <span id="hud-speed"></span>
+  <div id="hud-help">WASD move / drive · Shift run<br>Space jump · Q punch · F shoot · Right-click aim (ADS) · X reload<br>E enter car / talk · T phone · H horn · N nitro · R radio · Tab weapon wheel (1-5 pick)<br>4 respray (at garage) · B buy (gun shop / crew / business)<br>P pause · S save · M mute<br>E browse cars at Auto Palms · 1/2/3 quick-buy</div>
+</div>
+
+<div id="mission-card">
+  <div id="mission-card-act"></div>
+  <div id="mission-card-title"></div>
+  <div id="mission-card-body"></div>
+  <div id="mission-card-sub"></div>
+  <div id="mission-card-hint">ENTER / TAP TO CONTINUE</div>
+</div>
+<div id="dialogue-box">
+  <div id="dlg-portrait">L</div>
+  <div id="dlg-who">La Rosa</div>
+  <div id="dlg-role"></div>
+  <div id="dlg-text"></div>
+  <div id="dlg-hint">tap / E / Enter to continue ▸</div>
+</div>
+<div id="location-card"><div id="location-name"></div><div id="location-sub"></div></div>
+<div id="dealer-panel">
+  <div id="dealer-title">AUTO PALMS — BUY A CAR</div>
+  <div id="dealer-sub">Tap a car to preview it on the forecourt · BUY to take it home to Manny's Garage</div>
+  <div id="dealer-list"></div>
+  <div id="dealer-foot">
+    <button id="dealer-buy">BUY</button>
+    <button id="dealer-close">CLOSE (B)</button>
+  </div>
+</div>
+
+<button id="btn-phone" title="Phone (T)">📱</button>
+<div id="hud-prompt"></div>
+<div id="phone-panel">
+  <h3>📱 PHONE — JAX</h3>
+  <button id="phone-la-rosa">📞 Call La Rosa (next job)</button>
+  <button id="phone-manny">🔧 Call Manny (free repair at garage)</button>
+  <button id="phone-crew">👥 Call Crew (Leo · Maya · Rico)</button>
+  <button id="phone-gps">📍 GPS — next objective</button>
+  <button id="phone-close">✕ Close (T)</button>
+  <div class="msgs">La Rosa: "Jax, don't keep me waiting."<br>Manny: "Cars break. I fix. You pay."<br>Leo: "Need wheels? Call me."</div>
+</div>
+
+<div id="weapon-wheel">
+  <div class="ww-center">WEAPON<br>Q / 1-5</div>
+  <button id="ww-fists">FISTS</button>
+  <button id="ww-pistol">PISTOL</button>
+  <button id="ww-smg">SMG</button>
+  <button id="ww-shotgun">SHOTGUN</button>
+  <button id="ww-rifle">RIFLE</button>
+</div>
+
+<div id="video-title"><h1>LA VEGA 3D</h1><p>Twelve jobs. One city. No brakes.</p></div>
+
+<div id="touch-ui">
+  <div id="touch-joystick"><div id="touch-knob"></div></div>
+  <div class="touch-btn" id="btn-gas">GAS</div>
+  <div class="touch-btn" id="btn-brake">BRAKE</div>
+  <div class="touch-btn" id="btn-enter">ENTER</div>
+  <div class="touch-btn" id="btn-punch">PUNCH</div>
+  <div class="touch-btn" id="btn-jump">JUMP</div>
+  <div class="touch-btn" id="btn-shoot">FIRE</div>
+  <div class="touch-btn" id="btn-aim">AIM</div>
+  <div class="touch-btn" id="btn-touch-pause">II</div>
+</div>
+
+<div id="title-screen" class="screen" style="display:none">
+  <div class="menu-layout">
+    <div class="menu-left">
+      <h1>LA VEGA 3D</h1>
+      <h2>OPEN-WORLD CRIME IN LA VEGA</h2>
+      <p>Fresh off the ferry with empty pockets and a fast reputation. Twelve linked jobs
+      across three acts — steal cars, win a street race, run packages, shake the cops, settle the score
+      with the Vultures, pull off the La Vega Score, and finish with the Harbor Heist. A living city, smart cops,
+      and four wild biomes beyond the bay.</p>
+      <div class="menu-actions">
+        <button id="btn-play">▶ &nbsp;NEW GAME</button><br>
+        <button id="btn-continue" class="secondary">↻ &nbsp;LOAD GAME</button><br>
+        <button id="btn-settings" class="ghost">⚙ SETTINGS</button>
+        <button id="btn-credits" class="ghost">★ CREDITS</button><br>
+        <button id="btn-trailer" class="ghost small">▶ WATCH TRAILER</button>
+      </div>
+      <div id="save-slots">
+        <button class="slot" data-slot="1">SLOT 1 · empty</button>
+        <button class="slot" data-slot="2">SLOT 2 · empty</button>
+        <button class="slot" data-slot="3">SLOT 3 · empty</button>
+      </div>
+      <p class="save-note">Save from the pause menu (P) — progress also auto-saves after each job.</p>
+      <p class="keys">WASD / arrows — move &amp; drive &nbsp;·&nbsp; Shift — run &nbsp;·&nbsp; Space — jump &nbsp;·&nbsp; Q — punch &nbsp;·&nbsp; F — shoot<br>
+      E — get in / out of a car, talk to La Rosa &nbsp;·&nbsp; P — pause &nbsp;·&nbsp; S — save &nbsp;·&nbsp; M — mute<br>
+      Tab — weapon wheel (1-5 to pick) &nbsp;·&nbsp; mouse wheel — camera zoom in / out &nbsp;·&nbsp; B — buy (gun shop / crew / business)<br>
+      On Android: left joystick to move, right buttons to drive &amp; fight.</p>
+      <p class="menu-foot">LA VEGA NEVER SLEEPS — AND NEITHER DOES JAX VEGA · TOUCH &amp; KEYBOARD READY</p>
+    </div>
+    <div class="menu-right">
+      <div id="char-card">
+        <div class="char-row">
+          <button id="char-prev" class="char-nav">◀</button>
+          <div class="char-mid">
+            <div id="char-name">JAX VEGA</div>
+            <div id="char-role">Wheelman — the new guy</div>
+            <p id="char-desc">Fresh off the ferry, empty pockets, fast reputation. La Rosa gave him one shot.</p>
+          </div>
+          <button id="char-next" class="char-nav">▶</button>
+        </div>
+        <div id="char-dots"><span class="dot on"></span><span class="dot"></span></div>
+        <p class="char-note">V in game — switch protagonist · shared money &amp; jobs</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="credits-screen" class="screen">
+  <h1 style="font-size:40px">CREDITS</h1>
+  <p style="max-width:640px;margin:0 auto 8px auto;text-align:left;line-height:1.7">
+    <b>LA VEGA 3D</b> — an open-world crime game for the make.fun gta6-01 bounty.<br><br>
+    <b>Game by:</b> ilham (ilham270207) — design, story, character models.<br>
+    <b>Built by:</b> Muse / Max (Muse AI) with the Party — Dustin (research), Lucas (strategy &amp; verification), Mike (coordination), Will (creative), Eleven (heavy execution).<br>
+    <b>Character models:</b> Quaternius “Universal Base Characters” (CC0, via Poly Pizza) — Jax, La Rosa, NPCs, cars, weapons.<br>
+    <b>CesiumMan model:</b> © Cesium, CC-BY 4.0.<br>
+    <b>Dealer cars (CC-BY, via Poly Pizza):</b> “80s Car” by Nick Ladd; “Dominus Body v2” by Max M83; “Sports Hatchback” by ReppenThe303; “Sportster” by Chris Tarello; “Convertible” by Poly by Google (×2); “The Orange Racer” by Owl TeaGames; “Motorcycle” by Poly by Google (×2).<br>
+    <b>Engine:</b> Three.js (MIT). Music &amp; radio: synthesized in-game, no audio files.<br>
+    <b>All original:</b> city, characters, cars and story. No network needed.
+  </p>
+  <div><button id="btn-credits-back">BACK</button></div>
+</div>
+
+<div id="settings-screen" class="screen">
+  <h1 style="font-size:40px">SETTINGS</h1>
+  <div class="settings-row"><span>Graphics quality</span><select id="set-quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+  <div class="settings-row"><span>HUD density</span><select id="set-hud"><option value="full">Full — all panels</option><option value="compact">Compact — essentials only</option></select></div>
+  <div class="settings-row"><span>Controls</span><select id="set-controls"><option value="auto">Auto — detect device</option><option value="touch">Touch — joystick + buttons</option><option value="keyboard">Keyboard + mouse</option></select></div>
+  <div class="settings-row"><span>Shadows</span><input type="checkbox" id="set-shadows" checked></div>
+  <div class="settings-row"><span>Music volume</span><input type="range" id="set-music" min="0" max="1" step="0.05" value="0.6"></div>
+  <div class="settings-row"><span>Sound effects</span><input type="range" id="set-sfx" min="0" max="1" step="0.05" value="0.8"></div>
+  <div class="settings-row"><span>Mute all</span><input type="checkbox" id="set-mute"></div>
+  <div class="settings-row"><span>Camera sensitivity</span><input type="range" id="set-sensitivity" min="0.5" max="2" step="0.1" value="1"></div>
+  <div class="settings-row"><span>Controls</span><button id="btn-open-controls" style="min-width:0;padding:8px 16px;font-size:15px">🎮 VIEW CONTROLS</button></div>
+  <div class="settings-row"><span>Save data</span><button id="btn-reset-save" style="min-width:0;padding:8px 16px;font-size:15px">RESET SAVE</button></div>
+  <div><button id="btn-settings-back">BACK</button></div>
+</div>
+
+<div id="controls-screen" class="screen">
+  <h1 style="font-size:40px">CONTROLS</h1>
+  <div class="ctl-sec">⌨️ KEYBOARD + MOUSE</div>
+  <div class="controls-grid">
+    <div class="ctl-card"><b>WASD</b><span>MOVE &amp; DRIVE</span></div>
+    <div class="ctl-card"><b>MOUSE DRAG</b><span>LOOK AROUND</span></div>
+    <div class="ctl-card"><b>LEFT CLICK / F</b><span>SHOOT</span></div>
+    <div class="ctl-card"><b>RIGHT CLICK</b><span>AIM (ADS)</span></div>
+    <div class="ctl-card"><b>SHIFT</b><span>RUN</span></div>
+    <div class="ctl-card"><b>SPACE</b><span>JUMP</span></div>
+    <div class="ctl-card"><b>Q</b><span>PUNCH</span></div>
+    <div class="ctl-card"><b>E / ENTER</b><span>GET IN CAR · TALK</span></div>
+    <div class="ctl-card"><b>TAB</b><span>WEAPON WHEEL · 1–5 PICK</span></div>
+    <div class="ctl-card"><b>X</b><span>RELOAD</span></div>
+    <div class="ctl-card"><b>R</b><span>RADIO STATION</span></div>
+    <div class="ctl-card"><b>H</b><span>HORN</span></div>
+    <div class="ctl-card"><b>N</b><span>NITRO</span></div>
+    <div class="ctl-card"><b>V</b><span>CAR CAMERA · NEAR / FAR</span></div>
+    <div class="ctl-card"><b>T</b><span>PHONE</span></div>
+    <div class="ctl-card"><b>B</b><span>BUY · SHOP · CREW · BUSINESS</span></div>
+    <div class="ctl-card"><b>1–3</b><span>BUY CAR · AUTO PALMS</span></div>
+    <div class="ctl-card"><b>4</b><span>RESPRAY · AT THE GARAGE</span></div>
+    <div class="ctl-card"><b>P / ESC</b><span>PAUSE</span></div>
+    <div class="ctl-card"><b>S</b><span>SAVE · IN PAUSE MENU</span></div>
+    <div class="ctl-card"><b>M</b><span>MUTE SOUND</span></div>
+    <div class="ctl-card"><b>CREW</b><span>PASSIVES · HIRE AT THE CLUB</span></div>
+  </div>
+  <div class="ctl-sec">📱 TOUCH (PHONE)</div>
+  <div class="controls-grid">
+    <div class="ctl-card"><b>LEFT JOYSTICK</b><span>MOVE &amp; DRIVE</span></div>
+    <div class="ctl-card"><b>SWIPE</b><span>LOOK AROUND</span></div>
+    <div class="ctl-card"><b>PINCH</b><span>CAMERA ZOOM</span></div>
+    <div class="ctl-card"><b>GAS / BRAKE</b><span>DRIVE</span></div>
+    <div class="ctl-card"><b>FIRE</b><span>SHOOT</span></div>
+    <div class="ctl-card"><b>AIM</b><span>AIM (ADS)</span></div>
+    <div class="ctl-card"><b>PUNCH</b><span>PUNCH</span></div>
+    <div class="ctl-card"><b>JUMP</b><span>JUMP</span></div>
+    <div class="ctl-card"><b>ENTER</b><span>GET IN · TALK</span></div>
+  </div>
+  <p style="font-size:13px;letter-spacing:1px;color:#ffe9a8;opacity:.85">Touch &amp; keyboard ready — joystick on Android, WASD on desktop. No keyboard? The joystick does it all.</p>
+  <div><button id="btn-controls-back">BACK</button></div>
+</div>
+
+<div id="pause-screen" class="screen">
+  <h1 style="font-size:44px">PAUSED</h1>
+  <p id="pause-info">La Vega waits for no one, Jax.</p>
+  <div class="slot-row">
+    <button class="slot" data-slot="1">SLOT 1</button>
+    <button class="slot" data-slot="2">SLOT 2</button>
+    <button class="slot" data-slot="3">SLOT 3</button>
+  </div>
+  <div>
+    <button id="btn-resume">RESUME</button>
+    <button id="btn-save" class="secondary">SAVE (S)</button>
+    <button id="btn-pause-settings" class="secondary">SETTINGS</button>
+    <button id="btn-switch-char" class="secondary">SWITCH CHARACTER (V)</button>
+    <button id="btn-quit" class="secondary">QUIT TO TITLE (Q)</button>
+  </div>
+</div>
+
+<div id="end-screen" class="screen">
+  <h1 id="end-title" style="font-size:44px">WASTED</h1>
+  <p id="end-text"></p>
+  <div><button id="btn-again">KEEP PLAYING (Enter)</button></div>
+</div>
+
+<div id="quality-pill"></div>
+
+<div id="trailer-modal">
+  <video id="trailer-video" src="./trailer.mp4" controls playsinline></video>
+  <div><button id="btn-trailer-close" style="margin-top:14px;font-size:17px;font-weight:bold;padding:10px 26px;border:none;border-radius:8px;background:#ffd166;color:#20242c;cursor:pointer">CLOSE</button></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "./three/three.module.js",
+  "three/addons/": "./three/addons/"
+} }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
